@@ -1,8 +1,12 @@
-import requests, sys, os
-from Bio import SeqIO
+#!/usr/bin/python3
+from matplotlib.pyplot import table
+import numpy as np
+from pandas.io.pytables import Table
+import requests, sys, os, re
+from Bio import SeqIO, Seq
 from Bio.SeqRecord import SeqRecord
-from Bio.Seq import Seq
 import json
+#from Bio.SeqFeature import SeqFeature, FeatureLocation
 
 
 #Step 1 - Get ensemble ID 
@@ -19,8 +23,10 @@ print(r.text)
 # Mygene id: ENSG00000258839
 
 
-# Step 2. Use the ensembl database endpoints to grab the nucleotide sequence data for MC1R. Write this sequence to a fasta file. 
-#Define endpoint
+# Step 2. 
+        #2A. Use the ensembl database endpoints to grab the nucleotide sequence data for MC1R. Write this sequence to a fasta file. 
+
+        #Define endpoint
 def fetch_endpoint (server, request, content_type): #from https://www.ebi.ac.uk/training/online/sites/ebi.ac.uk.training.online/files/u1218/8_REST_API_Emily.pdf
     r = requests.get(server+request, headers={"Content-Type" : content_type})
     if not r.ok:
@@ -30,76 +36,79 @@ def fetch_endpoint (server, request, content_type): #from https://www.ebi.ac.uk/
         return r.json()
     else:
         return r.text
-server = "http://rest.ensembl.org"
+
 ext2 = "/xrefs/symbol/homo_sapiens/" + gene + "?"
-#https://rest.ensembl.org/documentation/info/xref_external
+        #https://rest.ensembl.org/documentation/info/xref_external
 con = "application/json"
 
 
-#get ensembl ID
+        #use ensembl ID to look up fasta file for redhair gene, MCIR
 get_lookup = fetch_endpoint(server, ext2, con)
 e_ID = get_lookup[0]['id']
 print(e_ID)
 
+        #Create fasta file name, pull sequence and save file as redhair.fasta
+seq = "/sequence/id/" + e_ID + "?"
+get_seq = fetch_endpoint(server, seq, "text/x-fasta")
+with open('redhair.fasta', 'w') as text_file:
+    text_file.write(get_seq) 
+#print(get_seq)
 
-#ex1 = "/sequec/id/ENSG00000258839?type=genomic"  #ensembl id
+    # 2B.Get the long ORF. 
+    # https://stackoverflow.com/questions/31757876/python-find-longest-orf-in-dna-sequence
 
-# record = SeqIO.read("redhair.fasta", "fasta")
-# table = 11
-# min_pro_len = 100
+records = SeqIO.parse('redhair.fasta', 'fasta')
 
-# max_len_pro = 0
-# max_pro = ""
-# for strand, nuc in [(+1, record.seq), (-1, record.seq.reverse_complement())]:
-#     for frame in range(3):
-#       length = 3 * ((len(record)-frame) // 3) #Multiple of three
-#       for pro in nuc[frame:frame+length].translate(table).split("*"): # to translate into amino acids
-#         if len(pro) >= min_pro_len:
-#           print("%s length %i, strand %i, frame %i" 
-#             % (pro, len(pro), strand, frame)) 
-#           if len(pro) > max_len_pro:
-#                 max_len_pro = len(pro)
-#                 max_pro = pro
-# print(max_len_pro, max_pro)
-# mpro = max_pro
+max_pro = ""
+for record in records:
+    for strand, seq in (1, record.seq), (-1, record.seq.reverse_complement()):
+        for frame in range(3):
+            index = frame
+            while index < len(record) - 6:
+                match = re.match('(ATG(?:\S{3})*?T(?:AG|AA|GA))', str(seq[index:]))
+                if match:
+                    orf = match.group()
+                    index += len(orf)
+                    if len(orf) > 1300:
+                        pos = str(record.seq).find(orf) + 1 
+                        long_orf = ("{}...{} - length {}, strand {}, frame {}, pos {}, name {}".format\
+                           (orf[:6], orf[-3:], len(orf), strand, frame, pos, record.id))
+                else: index += 3
+print(long_orf) # prints the longest orf 
+seq_orf = str(orf) # prints the entire seq of orf
+print(seq_orf)    
 
+        #2C. Translate DNA to amino acid
 
+amino_acid = Seq.translate(orf, to_stop=True)
+print(amino_acid)
+# amino_acid = orf_seq.translate(to_stop=True)   #http://biopython.org/DIST/docs/tutorial/Tutorial.html#sec25  
 
+        #2D. Add longest ORF to fasta file
 
-
-
-# with open('redhair.fasta', 'w') as text_file:
-#   text_file.write(r.text)
-
-
-# #look up information for gene mc1r 
-
-# record = SeqIO.read("red.fasta", "fasta")
-# table = 11
-# min_pro_len = 100
-
-
-
-# # Step 3. Show homologous species for MC1R gene. 
- 
-# con = "application/json"
-# ext = "/homology/symbol/human/" + "MC1R" + "?"
-# get_home = endpoint(server,ext,con)
-
-# hom = set()
-
-# for i in get_home['data'][0]['homologies']:
-#     if i['target']['species'] != 'homo_sapiens':
-#         hom.add(i['target']['species'])
-
-# #sort
-# sort_hom = sorted(hom)
-# str_hom = "\n".join(sort_hom)
+redhair = open("redhair.fasta", 'a')
+redhair.write("Amino Acid Sequence:\n{}". format(amino_acid))
+redhair.close()
 
 
+#Step 3. Show homologous species for MC1R gene. 
+     # https://rest.ensembl.org/documentation/info/homology_symbol
+     # https://github.com/Ensembl/rest-api-jupyter-course
+con = "application/json"
+ext = "/homology/symbol/human/" + "MC1R" + "?"  
+get_home = fetch_endpoint(server,ext,con)
 
-# #Step 3 : List homologous species of MC1R gene
-# hoy = open("homology.txt", 'w')
-# hoy.write("List of Homologous Species to MC1R:\n\n")
-# hoy.write(str_hom)
-# hoy.close()
+hom = set()
+
+for i in get_home['data'][0]['homologies']:
+    if i['target']['species'] != 'homo_sapiens':
+        hom.add(i['target']['species'])
+
+#sort
+homologous = "\n".join(sorted(hom))
+
+#Step 3 : List homologous species of MC1R gene
+hoy = open("homology.txt", 'w')
+hoy.write("List of Homologous Species to MC1R:\n\n")
+hoy.write(homologous)
+hoy.close()
